@@ -10,6 +10,7 @@ const statePath = resolve('state.json');
 let offset = 0;
 let state = { progress: {}, subs: {}, lists: {}, files: {} };
 const sessions = new Map();
+const remoteTitles = new Map();
 
 try { state = { ...state, ...JSON.parse(await readFile(statePath, 'utf8')) }; } catch {}
 
@@ -35,8 +36,23 @@ const titles = [
   { id: 'demon', title: 'Клинок, рассекающий демонов', alt: 'Demon Slayer: Kimetsu no Yaiba', year: 2019, status: 'Завершён', aliases: ['клинок', 'demon slayer', 'kimetsu'], genres: 'Экшен, Фэнтези', eps: 8, translations: [['dub', 'Демо-озвучка'], ['sub', 'Демо-субтитры']] },
   { id: 'pharmacist', title: 'Монолог фармацевта', alt: 'The Apothecary Diaries', year: 2023, status: 'Онгоинг', aliases: ['фармацевт', 'apothecary', 'kusuriya'], genres: 'Детектив, Драма', eps: 9, translations: [['dub', 'Демо-озвучка']] },
 ];
-function find(id) { return titles.find(x => x.id === id); }
-function search(q) { const n = q.toLocaleLowerCase('ru').replaceAll('ё', 'е'); return titles.filter(x => [x.title, x.alt, ...x.aliases].join(' ').toLocaleLowerCase('ru').includes(n)); }
+function find(id) { return titles.find(x => x.id === id) || remoteTitles.get(id); }
+function localSearch(q) { const n = q.toLocaleLowerCase('ru').replaceAll('ё', 'е'); return titles.filter(x => [x.title, x.alt, ...x.aliases].join(' ').toLocaleLowerCase('ru').includes(n)); }
+async function search(q) {
+  const local = localSearch(q);
+  if (local.length) return local;
+  try {
+    const query = `query ($search: String!) { Page(page: 1, perPage: 8) { media(search: $search, type: ANIME, isAdult: false) { id title { romaji english native } startDate { year } status episodes genres description format } } }`;
+    const response = await fetch('https://graphql.anilist.co', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ query, variables: { search: q } }) });
+    const payload = await response.json();
+    const result = (payload.data?.Page?.media || []).map((m) => {
+      const title = m.title?.english || m.title?.romaji || m.title?.native || q;
+      const item = { id: `al-${m.id}`, title, alt: m.title?.romaji || m.title?.native || title, year: m.startDate?.year || '—', status: m.status === 'FINISHED' ? 'Завершён' : m.status === 'RELEASING' ? 'Онгоинг' : 'Анонсирован', aliases: [m.title?.english, m.title?.romaji, m.title?.native].filter(Boolean), genres: (m.genres || []).join(', ') || 'Не указаны', eps: m.episodes || 1, translations: [['dub', 'Доступные озвучки подключаются источником']] };
+      remoteTitles.set(item.id, item); return item;
+    });
+    return result;
+  } catch (error) { console.error(`AniList search failed: ${error.message}`); return []; }
+}
 function titleText(t) { return `<b>${esc(t.title)}</b>\n<i>${esc(t.alt)}</i>\n${t.year} • TV • ${t.status}\nСерии: ${t.eps}\nЖанры: ${esc(t.genres)}\n\nВыбери действие:`; }
 function titleKb(t, user) { return kb([[cb('▶️ Смотреть', `watch:${t.id}`)], [cb(state.subs[`${user}:${t.id}`] ? '🔕 Отписаться' : '🔔 Подписаться', state.subs[`${user}:${t.id}`] ? `unsub:${t.id}` : `sub:${t.id}`), cb('＋ В список', `list:${t.id}`)], [cb('‹ В меню', 'menu')]]); }
 function episodes(t, tr) { const rows = []; for (let i = 1; i <= t.eps; i += 4) rows.push([...(Array.from({ length: Math.min(4, t.eps - i + 1) }, (_, j) => cb(String(i + j), `ep:${t.id}:${tr}:${i + j}`)))]); rows.push([cb('Сменить озвучку', `watch:${t.id}`), cb('К тайтлу', `title:${t.id}`)]); return kb(rows); }
@@ -74,7 +90,7 @@ async function message(m) {
   if (cmd === '/menu') return send(chat, '<b>Что посмотрим?</b>', menu(user));
   if (cmd === '/help') return send(chat, '<b>Команды</b>\n/start — запуск\n/menu — меню\n/find название — поиск\n/play название — просмотр', kb([[cb('‹ В меню', 'menu')]]));
   if (cmd === '/find' || cmd === '/play' || sessions.get(user) === 'search') {
-    const q = text.replace(/^\/\w+(?:@\w+)?\s*/u, ''); sessions.delete(user); const found = search(q);
+    const q = text.replace(/^\/\w+(?:@\w+)?\s*/u, ''); sessions.delete(user); const found = await search(q);
     if (!found.length) return send(chat, 'Ничего не нашлось. Попробуй другое написание.', kb([[cb('🔎 Новый поиск', 'search')], [cb('‹ В меню', 'menu')]]));
     const t = found[0]; return send(chat, `<b>${esc(t.title)}</b>\n<i>${esc(t.alt)}</i>\n${t.year} • ${t.status}`, kb([[cb('Открыть', `title:${t.id}`)], [cb('🔎 Новый поиск', 'search')], [cb('В меню', 'menu')]]));
   }
