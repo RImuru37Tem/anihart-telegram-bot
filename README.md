@@ -1,1 +1,1 @@
-# anihart-telegram-bot
+AniHart bot deployment files. Add `index.js`, `package.json`, and `render.yaml` to GitHub, then select this repository in Render. Add `TELEGRAM_BOT_TOKEN` in Render Environment Variables. `DEMO_VIDEO_URL` is optional and must be a permitted direct MP4 URL.

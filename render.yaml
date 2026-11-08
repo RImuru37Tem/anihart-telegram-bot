@@ -1,0 +1,14 @@
+services:
+  - type: worker
+    name: anihart-watch-bot
+    runtime: node
+    plan: free
+    buildCommand: ""
+    startCommand: "node index.js"
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: DEMO_VIDEO_URL
+        sync: false
+      - key: DEMO_EXTERNAL_URL
+        sync: false
